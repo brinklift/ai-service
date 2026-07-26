@@ -1,0 +1,89 @@
+spring:
+  application:
+    name: ai-service
+  cloud:
+    config:
+      enabled: false
+  datasource:
+    url: jdbc:postgresql://localhost:5436/ai_service_db
+    username: root
+    password: blilft@root@544
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8080/realms/master
+          jwk-set-uri: ${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs
+
+server:
+  port: 0
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:8020/eureka
+    registry-fetch-interval-seconds: 5
+    initial-instance-info-replication-interval-seconds: 5
+  instance:
+    instance-id: "${spring.application.name}:${random.value}"
+    hostname: localhost
+    prefer-ip-address: false
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: DEBUG
+    org.hibernate.SQL: DEBUG
+    com.blift: DEBUG
+
+keycloak:
+  admin-username: admin
+  admin-password: admin
+  auth-server-url: http://localhost:8080
+  realm: master
+  client-id: blift_auth
+  client-uid: be940472-c1c7-49f0-b151-f991613922a7
+  client-secret: 7pkH6WvCbzbX48tKLVZmQmxSP8z2H75i
+
+jwt:
+  auth:
+    converter:
+      principle-attribute: preferred_username
+      resource-id: blift_auth
+
+openai:
+  api:
+    key: ${OPENAI_API_KEY}
+    url: https://api.openai.com/v1/chat/completions
+    model: gpt-4-turbo
+
+# Internal service base URLs for Feign (bypass gateway — direct service calls)
+services:
+  booking-service:
+    url: http://localhost:8081
+  case-mgt:
+    url: http://localhost:8082
+  user-service:
+    url: http://localhost:8083
+
+ai:
+  briefing:
+    # Cron: run at 04:00 UTC daily (adjust per RCIC timezone at runtime)
+    schedule-cron: "0 0 4 * * *"
+    batch-size: 50
+    # Time estimates per pending task type (minutes)
+    workload:
+      minutes-per-pending-report: 30
+      minutes-per-refund-review: 15
+      minutes-per-agreement-followup: 10
