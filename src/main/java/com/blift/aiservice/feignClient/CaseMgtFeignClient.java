@@ -37,4 +37,31 @@ public interface CaseMgtFeignClient {
 
     @GetMapping("/api/payment/rcic-internal/{rcicUserId}/completed-report-purchases-count")
     ResponseEntity<Long> getCompletedReportPurchasesCount(@PathVariable Long rcicUserId);
+
+    /**
+     * Checks whether an RCIC has active Blift Pro access (managed in case-mgt via Stripe).
+     * This is a separate subscription system from the legacy user-service BliftProSubscription.
+     */
+    @GetMapping("/api/pro-subscription/internal/{rcicUserId}/has-access")
+    ResponseEntity<java.util.Map<String, Boolean>> hasCaseMgtProAccess(@PathVariable Long rcicUserId);
+
+    /**
+     * Get aggregated revenue from all sources (Stripe + all consultation types) for this week.
+     * Returns [{source, amount, currency, transactions}] for AI Business Insights calculation.
+     */
+    @GetMapping("/api/rcic-wallet/internal/{rcicUserId}/revenue/week/all-sources")
+    ResponseEntity<List<Map<String, Object>>> getWeeklyRevenueAllSources(@PathVariable Long rcicUserId);
+
+    /**
+     * Get aggregated revenue from all sources for last week.
+     */
+    @GetMapping("/api/rcic-wallet/internal/{rcicUserId}/revenue/last-week/all-sources")
+    ResponseEntity<List<Map<String, Object>>> getLastWeekRevenueAllSources(@PathVariable Long rcicUserId);
+
+    /**
+     * Get lifetime/all-time aggregated revenue from all sources.
+     * Used for "Total Revenue" in Business Insights.
+     */
+    @GetMapping("/api/rcic-wallet/internal/{rcicUserId}/revenue/lifetime/all-sources")
+    ResponseEntity<List<Map<String, Object>>> getLifetimeRevenueAllSources(@PathVariable Long rcicUserId);
 }

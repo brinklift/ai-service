@@ -28,14 +28,14 @@
     @RequiredArgsConstructor
     public class AiBriefingService {
 
-        private final RcicAiContextRepository contextRepository;
-        private final RcicAiBriefingRepository briefingRepository;
-        private final AiContextBuilderService contextBuilderService;
-        private final WebClient.Builder webClientBuilder;
-        private final ObjectMapper objectMapper;
+            private final RcicAiContextRepository contextRepository;
+            private final RcicAiBriefingRepository briefingRepository;
+            private final AiContextBuilderService contextBuilderService;
+            private final WebClient.Builder webClientBuilder;
+            private final ObjectMapper objectMapper;
 
-        @Value("${openai.api.key}")
-        private String openAiApiKey;
+            @Value("${openai.api.key}")
+            private String openAiApiKey;
 
         @Value("${openai.api.url}")
         private String openAiApiUrl;
