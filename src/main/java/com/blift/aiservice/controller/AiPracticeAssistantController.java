@@ -51,26 +51,27 @@ public class AiPracticeAssistantController {
         if (rcicUserId == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
+        SubscriptionStatusDto status = null;
         try {
-            SubscriptionStatusDto status = userFeignClient.getSubscriptionStatusForRcic(rcicUserId).getBody();
-            if (status == null) {
-                SubscriptionCheckDto dto = new SubscriptionCheckDto();
-                dto.setActive(false);
-                dto.setPlanType("NONE");
-                return ResponseEntity.ok(dto);
-            }
-            SubscriptionCheckDto dto = new SubscriptionCheckDto();
-            dto.setActive(status.isActive());
-            dto.setPlanType(status.getPlanType());
-            dto.setInGracePeriod(status.isInGracePeriod());
-            dto.setDaysRemaining(status.getDaysRemaining());
-            dto.setAiConsentGiven(status.isAiConsentGiven());
-            dto.setTrialExpiresAt(status.getTrialExpiresAt());
-            return ResponseEntity.ok(dto);
+            status = userFeignClient.getSubscriptionStatusForRcic(rcicUserId).getBody();
         } catch (Exception e) {
-            log.error("Error checking subscription for RCIC {}: {}", rcicUserId, e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+            log.warn("User-service subscription status failed for RCIC {}: {}", rcicUserId, e.getMessage());
         }
+        boolean caseMgtActive = false;
+        try {
+            var resp = caseMgtFeignClient.hasCaseMgtProAccess(rcicUserId).getBody();
+            caseMgtActive = resp != null && Boolean.TRUE.equals(resp.get("hasProAccess"));
+        } catch (Exception e) {
+            log.warn("Case-mgt Pro access check failed for RCIC {}: {}", rcicUserId, e.getMessage());
+        }
+        SubscriptionCheckDto dto = new SubscriptionCheckDto();
+        dto.setActive((status != null && status.isActive()) || caseMgtActive);
+        dto.setPlanType(caseMgtActive && (status == null || !status.isActive()) ? "BLIFT_PRO" : (status != null ? status.getPlanType() : "NONE"));
+        dto.setInGracePeriod(status != null && status.isInGracePeriod());
+        dto.setDaysRemaining(status != null ? status.getDaysRemaining() : 0);
+        dto.setAiConsentGiven(caseMgtActive || (status != null && status.isAiConsentGiven()));
+        dto.setTrialExpiresAt(status != null ? status.getTrialExpiresAt() : null);
+        return ResponseEntity.ok(dto);
     }
 
     @GetMapping("/briefing")
@@ -149,9 +150,18 @@ public class AiPracticeAssistantController {
     private boolean isSubscribed(Long rcicUserId) {
         try {
             SubscriptionStatusDto status = userFeignClient.getSubscriptionStatusForRcic(rcicUserId).getBody();
-            return status != null && status.isActive();
+            if (status != null && status.isActive()) {
+                return true;
+            }
         } catch (Exception e) {
-            log.warn("Subscription check failed for RCIC {}: {}", rcicUserId, e.getMessage());
+            log.warn("User-service subscription check failed for RCIC {}: {}", rcicUserId, e.getMessage());
+        }
+
+        try {
+            var resp = caseMgtFeignClient.hasCaseMgtProAccess(rcicUserId).getBody();
+            return resp != null && Boolean.TRUE.equals(resp.get("hasProAccess"));
+        } catch (Exception e) {
+            log.warn("Case-mgt Pro access check failed for RCIC {}: {}", rcicUserId, e.getMessage());
             return false;
         }
     }

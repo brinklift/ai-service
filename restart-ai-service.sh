@@ -43,6 +43,15 @@ kill_service() {
 }
 kill_service
 
+# ── Load .env if present ───────────────────────────────────────────────────────
+if [ -f "${SERVICE_DIR}/.env" ]; then
+  set -o allexport
+  # shellcheck disable=SC1091
+  source "${SERVICE_DIR}/.env"
+  set +o allexport
+  echo "→ Loaded environment from .env"
+fi
+
 # ── Start service ──────────────────────────────────────────────────────────────
 echo ""
 echo "→ Building and starting ${SERVICE_NAME} (profile: dev)..."
