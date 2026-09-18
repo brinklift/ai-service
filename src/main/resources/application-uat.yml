@@ -29,7 +29,11 @@ spring:
       resourceserver:
         jwt:
           issuer-uri: https://uatauth.blift.ca/realms/master
-          jwk-set-uri: ${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs
+          # Fetch signing keys from the Keycloak container directly rather than via the
+          # public hostname. The public URL routes through Cloudflare, which can half-close
+          # the connection; the JWKS client has no read timeout, so the fetching thread then
+          # blocks forever holding the RemoteJWKSet lock and the service stops serving requests.
+          jwk-set-uri: http://localhost:9090/realms/master/protocol/openid-connect/certs
 
 server:
   port: 0
