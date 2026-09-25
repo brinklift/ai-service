@@ -39,6 +39,13 @@ public interface CaseMgtFeignClient {
     ResponseEntity<Long> getCompletedReportPurchasesCount(@PathVariable Long rcicUserId);
 
     /**
+     * Actual amount the RCIC spent on consultation report generation, summed from the
+     * purchase records rather than derived from an assumed per-report price.
+     */
+    @GetMapping("/api/payment/rcic-internal/{rcicUserId}/completed-report-purchases-total")
+    ResponseEntity<java.math.BigDecimal> getCompletedReportPurchasesTotal(@PathVariable Long rcicUserId);
+
+    /**
      * Checks whether an RCIC has active Blift Pro access (managed in case-mgt via Stripe).
      * This is a separate subscription system from the legacy user-service BliftProSubscription.
      */
