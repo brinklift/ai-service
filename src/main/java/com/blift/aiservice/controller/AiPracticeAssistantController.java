@@ -52,17 +52,27 @@ public class AiPracticeAssistantController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
         SubscriptionStatusDto status = null;
+        boolean userServiceReachable = true;
         try {
             status = userFeignClient.getSubscriptionStatusForRcic(rcicUserId).getBody();
         } catch (Exception e) {
+            userServiceReachable = false;
             log.warn("User-service subscription status failed for RCIC {}: {}", rcicUserId, e.getMessage());
         }
         boolean caseMgtActive = false;
+        boolean caseMgtReachable = true;
         try {
             var resp = caseMgtFeignClient.hasCaseMgtProAccess(rcicUserId).getBody();
             caseMgtActive = resp != null && Boolean.TRUE.equals(resp.get("hasProAccess"));
         } catch (Exception e) {
+            caseMgtReachable = false;
             log.warn("Case-mgt Pro access check failed for RCIC {}: {}", rcicUserId, e.getMessage());
+        }
+        // With both sources unreachable there is no evidence either way. Reporting
+        // "not subscribed" would show a paying RCIC the upgrade wall and invite them
+        // to start a trial they already have, so report the outage instead.
+        if (!userServiceReachable && !caseMgtReachable) {
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).build();
         }
         SubscriptionCheckDto dto = new SubscriptionCheckDto();
         dto.setActive((status != null && status.isActive()) || caseMgtActive);
