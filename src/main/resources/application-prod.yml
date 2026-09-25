@@ -5,8 +5,8 @@ spring:
   # use `optional:`; this is a new service, so nothing regresses by being strict.)
   config:
     import:
-      - file:/etc/blift/secrets/ai-service-secrets.properties
-      - file:/etc/blift/secrets/keycloak-secret.properties
+      - file:/etc/blift/secrets/prod/ai-service-secrets.properties
+      - file:/etc/blift/secrets/prod/keycloak-secret.properties
   application:
     name: ai-service
   cloud:
