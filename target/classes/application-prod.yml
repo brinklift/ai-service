@@ -1,0 +1,96 @@
+spring:
+  # Secrets are supplied on the production server and are never committed.
+  # Deliberately not `optional:` — a missing secrets file must abort startup rather
+  # than let the service boot with unresolved placeholders. (The older prod profiles
+  # use `optional:`; this is a new service, so nothing regresses by being strict.)
+  config:
+    import:
+      - file:/etc/blift/secrets/ai-service-secrets.properties
+      - file:/etc/blift/secrets/keycloak-secret.properties
+  application:
+    name: ai-service
+  cloud:
+    config:
+      enabled: false
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      max-lifetime: 1800000
+  jpa:
+    hibernate:
+      # Prod does not auto-migrate: schema changes ship as reviewed SQL, matching
+      # document_service/application-prod.yml.
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://auth.blift.ca/realms/master
+          jwk-set-uri: ${spring.security.oauth2.resourceserver.jwt.issuer-uri}/protocol/openid-connect/certs
+
+server:
+  port: 0
+
+eureka:
+  client:
+    service-url:
+      defaultZone: http://localhost:7020/eureka
+    registry-fetch-interval-seconds: 5
+    initial-instance-info-replication-interval-seconds: 5
+  instance:
+    prefer-ip-address: true
+    ip-address: 72.60.113.78
+    instance-id: "${spring.application.name}:${random.value}"
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 10
+
+logging:
+  level:
+    root: INFO
+    org.springframework.security: INFO
+    org.keycloak: INFO
+    com.blift: INFO
+
+keycloak:
+  admin-username: ${KEYCLOAK_ADMIN_USERNAME}
+  admin-password: ${KEYCLOAK_ADMIN_PASSWORD}
+  auth-server-url: https://auth.blift.ca
+  realm: master
+  client-id: blift_auth
+  client-uid: ${KEYCLOAK_CLIENT_UID}
+  client-secret: ${KEYCLOAK_CLIENT_SECRET}
+
+jwt:
+  auth:
+    converter:
+      principle-attribute: preferred_username
+      resource-id: blift_auth
+
+openai:
+  api:
+    key: ${OPENAI_API_KEY}
+    url: https://api.openai.com/v1/chat/completions
+    model: ${OPENAI_MODEL:gpt-4-turbo}
+
+# NOTE: the `services.*.url` block from application-dev.yml is intentionally omitted.
+# The Feign clients are declared as @FeignClient(name = "booking-service" |
+# "user-service" | "case-management-service") with no `url` attribute, so they resolve
+# through Eureka. Hardcoded URLs would be dead config here and actively wrong given
+# `server.port: 0`.
+
+ai:
+  briefing:
+    # Cron: run at 04:00 UTC daily (adjust per RCIC timezone at runtime)
+    schedule-cron: ${AI_BRIEFING_CRON:0 0 4 * * *}
+    batch-size: ${AI_BRIEFING_BATCH_SIZE:50}
+    # Time estimates per pending task type (minutes)
+    workload:
+      minutes-per-pending-report: 30
+      minutes-per-refund-review: 15
+      minutes-per-agreement-followup: 10

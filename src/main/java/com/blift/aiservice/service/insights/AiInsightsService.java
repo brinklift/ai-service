@@ -42,14 +42,53 @@ public class AiInsightsService {
         AiInsightsResponseDto dto = new AiInsightsResponseDto();
         try {
             Map<String, Object> snapshot = objectMapper.readValue(context.getSnapshotJson(), new TypeReference<>() {});
-            Map<String, Object> week = (Map<String, Object>) snapshot.getOrDefault("week", Map.of());
-            Map<String, Object> today = (Map<String, Object>) snapshot.getOrDefault("today", Map.of());
-            Map<String, Object> reportStatus = (Map<String, Object>) snapshot.getOrDefault("reportStatus", Map.of());
-            Map<String, Object> workload = (Map<String, Object>) snapshot.getOrDefault("workloadForecast", Map.of());
+            // Each section is shape-checked rather than blind-cast: if the upstream
+            // snapshot shape changes, an unchecked cast throws ClassCastException
+            // instead of degrading to an empty section.
+            Map<String, Object> week = sectionOf(snapshot, "week");
+            Map<String, Object> today = sectionOf(snapshot, "today");
+            Map<String, Object> reportStatus = sectionOf(snapshot, "reportStatus");
+            Map<String, Object> workload = sectionOf(snapshot, "workloadForecast");
 
-            double totalRevenue = toDouble(week.get("totalRevenue"));
-            double lastWeekRevenue = toDouble(week.get("totalRevenueLastWeek"));
-            double changePct = lastWeekRevenue > 0 ? ((totalRevenue - lastWeekRevenue) / lastWeekRevenue) * 100 : 0;
+            // Always fetch LIFETIME revenue live — snapshot data is stale (only this week/last week)
+            double totalRevenue = 0;
+            double thisWeekRevenue = 0;
+            double lastWeekRevenue = 0;
+            try {
+                var resp = caseMgtFeignClient.getLifetimeRevenueAllSources(rcicUserId);
+                if (resp.getBody() != null) {
+                    totalRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "lifetime");
+                    log.info("[AI Insights] Lifetime revenue from all sources (snapshot path): {} for rcicUserId: {}", totalRevenue, rcicUserId);
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch lifetime revenue from all sources, using snapshot value: {}", e.getMessage());
+                totalRevenue = toDouble(week.get("totalRevenue"));
+            }
+
+            try {
+                var resp = caseMgtFeignClient.getWeeklyRevenueAllSources(rcicUserId);
+                if (resp.getBody() != null) {
+                    thisWeekRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "this week");
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch this week revenue from all sources, using snapshot value: {}", e.getMessage());
+                thisWeekRevenue = toDouble(week.get("totalRevenue"));
+            }
+
+            try {
+                var resp = caseMgtFeignClient.getLastWeekRevenueAllSources(rcicUserId);
+                if (resp.getBody() != null) {
+                    lastWeekRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "last week");
+                    log.info("[AI Insights] Last week revenue from all sources (snapshot path): {} for rcicUserId: {}", lastWeekRevenue, rcicUserId);
+                }
+            } catch (Exception e) {
+                log.warn("Could not fetch last week revenue from all sources, using snapshot value: {}", e.getMessage());
+                lastWeekRevenue = toDouble(week.get("totalRevenueLastWeek"));
+            }
+
+            // The trend compares like with like: this week against last week. Comparing the
+            // lifetime total against last week would report a meaningless change.
+            double changePct = lastWeekRevenue > 0 ? ((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue) * 100 : 0;
 
             dto.setTotalRevenue(totalRevenue);
             dto.setTotalRevenueLastWeek(lastWeekRevenue);
@@ -96,19 +135,8 @@ public class AiInsightsService {
             List<Map<String, Object>> revenueByDay = (List<Map<String, Object>>) week.getOrDefault("revenueByDay", List.of());
             dto.setRevenueByDay(revenueByDay);
 
-            // Always fetch live purchase count from case-mgt to avoid stale snapshot data
-            try {
-                var purchaseResp = caseMgtFeignClient.getCompletedReportPurchasesCount(rcicUserId);
-                if (purchaseResp.getBody() != null) {
-                    long purchased = purchaseResp.getBody();
-                    dto.setTotalPurchasedReports(purchased);
-                    dto.setTotalPurchaseAmount(purchased * 5.0);
-                }
-            } catch (Exception ex) {
-                log.warn("Could not fetch purchase count from case-mgt, using snapshot value: {}", ex.getMessage());
-                dto.setTotalPurchasedReports(toLong(reportStatus.get("totalPurchasedReports")));
-                dto.setTotalPurchaseAmount(toDouble(reportStatus.get("totalPurchaseAmount")));
-            }
+            // Always fetch live purchase figures from case-mgt to avoid stale snapshot data
+            applyReportPurchaseSpend(dto, rcicUserId);
 
             // Calculate average revenue per consultation and per client
             calculateAverageMetrics(dto, rcicUserId);
@@ -122,29 +150,42 @@ public class AiInsightsService {
 
     private AiInsightsResponseDto buildFromLiveData(Long rcicUserId) {
         AiInsightsResponseDto dto = new AiInsightsResponseDto();
-        double totalRevenue = 0;
-        double lastWeekRevenue = 0;
+        double totalRevenue = 0;  // Lifetime/all-time total
+        double thisWeekRevenue = 0;  // This week only
+        double lastWeekRevenue = 0;  // Last week only
         List<Map<String, Object>> revenueByDay = new ArrayList<>();
+        
+        // Fetch LIFETIME revenue for "Total Revenue" display
         try {
-            var resp = caseMgtFeignClient.getWeeklyTransactionsForRcic(rcicUserId);
+            var resp = caseMgtFeignClient.getLifetimeRevenueAllSources(rcicUserId);
             if (resp.getBody() != null) {
-                totalRevenue = resp.getBody().stream()
-                        .mapToDouble(t -> t.getAmount() != null ? t.getAmount().doubleValue() : 0)
-                        .sum();
+                totalRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "lifetime");
+                log.info("[AI Insights] Lifetime revenue from all sources: {} for rcicUserId: {}", totalRevenue, rcicUserId);
             }
         } catch (Exception e) {
-            log.warn("Could not fetch weekly transactions: {}", e.getMessage());
+            log.warn("Could not fetch lifetime revenue from all sources: {}", e.getMessage());
         }
 
+        // Fetch THIS WEEK revenue for trend comparison
         try {
-            var resp = caseMgtFeignClient.getLastWeekTransactionsForRcic(rcicUserId);
+            var resp = caseMgtFeignClient.getWeeklyRevenueAllSources(rcicUserId);
             if (resp.getBody() != null) {
-                lastWeekRevenue = resp.getBody().stream()
-                        .mapToDouble(t -> t.getAmount() != null ? t.getAmount().doubleValue() : 0)
-                        .sum();
+                thisWeekRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "this week");
+                log.info("[AI Insights] This week revenue from all sources: {} for rcicUserId: {}", thisWeekRevenue, rcicUserId);
             }
         } catch (Exception e) {
-            log.warn("Could not fetch last week transactions: {}", e.getMessage());
+            log.warn("Could not fetch this week revenue from all sources: {}", e.getMessage());
+        }
+
+        // Fetch LAST WEEK revenue for trend comparison
+        try {
+            var resp = caseMgtFeignClient.getLastWeekRevenueAllSources(rcicUserId);
+            if (resp.getBody() != null) {
+                lastWeekRevenue = sumCadRevenue(resp.getBody(), rcicUserId, "last week");
+                log.info("[AI Insights] Last week revenue from all sources: {} for rcicUserId: {}", lastWeekRevenue, rcicUserId);
+            }
+        } catch (Exception e) {
+            log.warn("Could not fetch last week revenue from all sources: {}", e.getMessage());
         }
 
         try {
@@ -156,10 +197,11 @@ public class AiInsightsService {
             log.warn("Could not fetch revenue by day: {}", e.getMessage());
         }
 
-        double changePct = lastWeekRevenue > 0 ? ((totalRevenue - lastWeekRevenue) / lastWeekRevenue) * 100 : 0;
-        dto.setTotalRevenue(totalRevenue);
-        dto.setTotalRevenueLastWeek(lastWeekRevenue);
-        dto.setRevenueChangePct(changePct);
+        // Calculate change percentage (this week vs last week, not lifetime)
+        double changePct = lastWeekRevenue > 0 ? ((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue) * 100 : 0;
+        dto.setTotalRevenue(totalRevenue);  // Lifetime total
+        dto.setTotalRevenueLastWeek(lastWeekRevenue);  // Last week only
+        dto.setRevenueChangePct(changePct);  // Change from last week to this week
         dto.setRevenueByDay(revenueByDay);
 
         try {
@@ -210,17 +252,8 @@ public class AiInsightsService {
             log.warn("Could not fetch workload forecast from booking service: {}", e.getMessage());
         }
 
-        // Fetch purchase count directly from case-mgt to ensure accuracy
-        try {
-            var purchaseResp = caseMgtFeignClient.getCompletedReportPurchasesCount(rcicUserId);
-            if (purchaseResp.getBody() != null) {
-                long purchased = purchaseResp.getBody();
-                dto.setTotalPurchasedReports(purchased);
-                dto.setTotalPurchaseAmount(purchased * 5.0);
-            }
-        } catch (Exception e) {
-            log.warn("Could not fetch completed report purchase count from case-mgt: {}", e.getMessage());
-        }
+        // Fetch purchase figures directly from case-mgt to ensure accuracy
+        applyReportPurchaseSpend(dto, rcicUserId);
 
         // Calculate average revenue per consultation and per client
         calculateAverageMetrics(dto, rcicUserId);
@@ -285,6 +318,78 @@ public class AiInsightsService {
             dto.setTotalClientsServed(0);
             dto.setAverageRevenuePerClient(0.0);
         }
+    }
+
+    /**
+     * Sums the CAD-denominated rows of an all-sources revenue response.
+     *
+     * Every revenue figure surfaced by Practice Intelligence is displayed as CAD, so
+     * rows in another currency are reported separately instead of being added into a
+     * CAD total — adding them would silently overstate revenue by the FX difference.
+     */
+    private double sumCadRevenue(List<Map<String, Object>> rows, Long rcicUserId, String label) {
+        if (rows == null) {
+            return 0;
+        }
+        double total = 0;
+        for (Map<String, Object> row : rows) {
+            Object currency = row.get("currency");
+            String currencyCode = currency != null ? currency.toString() : "CAD";
+            double amount = toDouble(row.get("amount"));
+            if ("CAD".equalsIgnoreCase(currencyCode)) {
+                total += amount;
+            } else if (amount != 0) {
+                log.warn("[AI Insights] Excluding {} {} of {} revenue for rcicUserId {} — no FX conversion available.",
+                        amount, currencyCode, label, rcicUserId);
+            }
+        }
+        return total;
+    }
+
+    /**
+     * Report-generation spend, taken from the actual purchase amounts. Falls back to the
+     * purchase count when the totals endpoint is unavailable.
+     */
+    private void applyReportPurchaseSpend(AiInsightsResponseDto dto, Long rcicUserId) {
+        long purchased = 0;
+        try {
+            var purchaseResp = caseMgtFeignClient.getCompletedReportPurchasesCount(rcicUserId);
+            if (purchaseResp.getBody() != null) {
+                purchased = purchaseResp.getBody();
+            }
+        } catch (Exception ex) {
+            log.warn("Could not fetch report purchase count from case-mgt: {}", ex.getMessage());
+        }
+        dto.setTotalPurchasedReports(purchased);
+
+        try {
+            var totalResp = caseMgtFeignClient.getCompletedReportPurchasesTotal(rcicUserId);
+            if (totalResp.getBody() != null) {
+                dto.setTotalPurchaseAmount(totalResp.getBody().doubleValue());
+                return;
+            }
+        } catch (Exception ex) {
+            log.warn("Could not fetch report purchase total from case-mgt: {}", ex.getMessage());
+        }
+        dto.setTotalPurchaseAmount(0.0);
+    }
+
+    /**
+     * Returns the named snapshot section, or an empty map when it is absent or is
+     * not an object. Guards against ClassCastException if the upstream snapshot
+     * shape changes.
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> sectionOf(Map<String, Object> snapshot, String key) {
+        Object section = snapshot.get(key);
+        if (section instanceof Map<?, ?> map) {
+            return (Map<String, Object>) map;
+        }
+        if (section != null) {
+            log.warn("[AI Insights] Snapshot section '{}' was {}, expected an object — treating as empty.",
+                    key, section.getClass().getSimpleName());
+        }
+        return Map.of();
     }
 
     private double toDouble(Object val) {
