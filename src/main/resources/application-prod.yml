@@ -22,7 +22,7 @@ spring:
   jpa:
     hibernate:
       # Prod does not auto-migrate: schema changes ship as reviewed SQL, matching
-      # document_service/application-prod.yml.
+      # document-service/application-prod.yml.
       ddl-auto: none
     properties:
       hibernate:
