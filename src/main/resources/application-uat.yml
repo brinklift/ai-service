@@ -1,4 +1,7 @@
 spring:
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   # Secrets are supplied on the UAT server and are never committed.
   # Deliberately not `optional:` — a missing secrets file must abort startup rather
   # than let the service boot with unresolved placeholders.
@@ -20,7 +23,7 @@ spring:
       max-lifetime: 1800000
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
@@ -88,8 +91,6 @@ openai:
 
 ai:
   briefing:
-    # Cron: run at 04:00 UTC daily (adjust per RCIC timezone at runtime)
-    schedule-cron: ${AI_BRIEFING_CRON:0 0 4 * * *}
     batch-size: ${AI_BRIEFING_BATCH_SIZE:50}
     # Time estimates per pending task type (minutes)
     workload:

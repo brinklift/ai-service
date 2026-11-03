@@ -12,7 +12,6 @@ import com.blift.aiservice.repository.RcicAiContextRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -34,27 +33,6 @@ public class AiContextBuilderService {
     private final CaseMgtFeignClient caseMgtFeignClient;
     private final RcicAiContextRepository contextRepository;
     private final ObjectMapper objectMapper;
-
-    @Scheduled(cron = "${ai.briefing.schedule-cron:0 0 4 * * *}")
-    public void runNightlyContextBuild() {
-        log.info("[AI Context Builder] Starting nightly context build");
-        List<Long> activeRcicIds = getActiveSubscriberIds();
-        log.info("[AI Context Builder] Found {} active Blift Pro subscribers", activeRcicIds.size());
-
-        int batchSize = 50;
-        for (int i = 0; i < activeRcicIds.size(); i += batchSize) {
-            List<Long> batch = activeRcicIds.subList(i, Math.min(i + batchSize, activeRcicIds.size()));
-            processBatch(batch);
-            if (i + batchSize < activeRcicIds.size()) {
-                try {
-                    Thread.sleep(2000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        }
-        log.info("[AI Context Builder] Nightly context build complete");
-    }
 
     public RcicAiContext buildContextForRcic(Long rcicUserId) {
         LocalDate today = LocalDate.now();
@@ -89,26 +67,6 @@ public class AiContextBuilderService {
             failed.setBuildStatus("FAILED");
             failed.setBuildErrorMessage(e.getMessage());
             return contextRepository.save(failed);
-        }
-    }
-
-    private void processBatch(List<Long> rcicIds) {
-        for (Long rcicUserId : rcicIds) {
-            try {
-                buildContextForRcic(rcicUserId);
-            } catch (Exception e) {
-                log.error("[AI Context Builder] Unhandled error for RCIC {}: {}", rcicUserId, e.getMessage());
-            }
-        }
-    }
-
-    private List<Long> getActiveSubscriberIds() {
-        try {
-            var response = userFeignClient.getActiveBliftProRcicIds();
-            return response.getBody() != null ? response.getBody() : List.of();
-        } catch (Exception e) {
-            log.error("[AI Context Builder] Failed to get active subscriber IDs: {}", e.getMessage());
-            return List.of();
         }
     }
 

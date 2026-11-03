@@ -7,6 +7,8 @@
     import com.blift.aiservice.entity.RcicAiContext;
     import com.blift.aiservice.repository.RcicAiBriefingRepository;
     import com.blift.aiservice.repository.RcicAiContextRepository;
+    import org.springframework.jdbc.core.JdbcTemplate;
+    import org.springframework.transaction.support.TransactionTemplate;
     import com.blift.aiservice.service.context.AiContextBuilderService;
     import com.fasterxml.jackson.core.type.TypeReference;
     import com.fasterxml.jackson.databind.ObjectMapper;
@@ -35,6 +37,10 @@
             private final AiContextBuilderService contextBuilderService;
             private final WebClient.Builder webClientBuilder;
             private final ObjectMapper objectMapper;
+            private final TransactionTemplate transactionTemplate;
+            private final JdbcTemplate jdbcTemplate;
+
+            private static final int BRIEFING_LOCK_NAMESPACE = 7301;
 
             @Value("${openai.api.key}")
             private String openAiApiKey;
@@ -75,33 +81,50 @@
                 }
                 """;
 
+        /** Generated on first page open of the day; every later open reads the stored briefing. */
         public RcicAiBriefing getOrGenerateBriefing(Long rcicUserId) {
             LocalDate today = LocalDate.now();
             Optional<RcicAiBriefing> cached = briefingRepository.findByRcicUserIdAndBriefingDate(rcicUserId, today);
             if (cached.isPresent()) {
-                log.info("[AI Briefing] Returning cached briefing for RCIC {}", rcicUserId);
                 return cached.get();
             }
-            return generateBriefing(rcicUserId);
+            // The lock makes simultaneous requests (two tabs, several instances) wait, and the
+            // re-check hands them the stored briefing, so only the first one calls OpenAI.
+            return transactionTemplate.execute(status -> {
+                jdbcTemplate.queryForList("SELECT pg_advisory_xact_lock(?, ?)", BRIEFING_LOCK_NAMESPACE, Long.hashCode(rcicUserId));
+                return briefingRepository.findByRcicUserIdAndBriefingDate(rcicUserId, today)
+                        .orElseGet(() -> generateBriefing(rcicUserId, today));
+            });
         }
 
+        /** Refreshing never buys a second briefing: the limit is one per RCIC per day. */
         public RcicAiBriefing refreshBriefing(Long rcicUserId) {
-            LocalDate today = LocalDate.now();
-            Optional<RcicAiBriefing> cached = briefingRepository.findByRcicUserIdAndBriefingDate(rcicUserId, today);
-            if (cached.isPresent()) {
-                log.info("[AI Briefing] Refresh requested but cached briefing already exists for RCIC {} today — skipping OpenAI call", rcicUserId);
-                return cached.get();
-            }
-            RcicAiContext context = contextBuilderService.buildContextForRcic(rcicUserId);
-            return generateBriefingFromContext(rcicUserId, context);
+            return getOrGenerateBriefing(rcicUserId);
         }
 
-        private RcicAiBriefing generateBriefing(Long rcicUserId) {
-            LocalDate today = LocalDate.now();
+        private RcicAiBriefing generateBriefing(Long rcicUserId, LocalDate today) {
             RcicAiContext context = contextRepository
                     .findByRcicUserIdAndContextDate(rcicUserId, today)
+                    .filter(existing -> !"FAILED".equals(existing.getBuildStatus()))
                     .orElseGet(() -> contextBuilderService.buildContextForRcic(rcicUserId));
+            if ("FAILED".equals(context.getBuildStatus())) {
+                // No facts to summarise: don't pay for an empty briefing. The next open tries again.
+                log.warn("[AI Briefing] Context build failed for RCIC {} — skipping OpenAI call", rcicUserId);
+                return unavailableBriefing(rcicUserId, today, context);
+            }
             return generateBriefingFromContext(rcicUserId, context);
+        }
+
+        private RcicAiBriefing unavailableBriefing(Long rcicUserId, LocalDate today, RcicAiContext context) {
+            RcicAiBriefing fallback = new RcicAiBriefing();
+            fallback.setRcicUserId(rcicUserId);
+            fallback.setBriefingDate(today);
+            fallback.setBriefingText("AI briefing is temporarily unavailable. Your Action Center remains fully functional.");
+            fallback.setBulletPoints("[]");
+            fallback.setClientSpotlights("[]");
+            fallback.setContextSnapshot(context);
+            fallback.setModelVersion(openAiModel);
+            return fallback;
         }
 
         @SuppressWarnings("unchecked")
@@ -109,6 +132,7 @@
             LocalDate today = LocalDate.now();
             log.info("[AI Briefing] Generating briefing for RCIC {} from context id={}", rcicUserId, context.getId());
 
+            OpenAiResponse aiResponse = null;
             try {
                 String userPrompt = buildUserPrompt(context.getSnapshotJson());
 
@@ -122,7 +146,7 @@
                         .stream(false)
                         .build();
 
-                OpenAiResponse aiResponse = webClientBuilder.build()
+                aiResponse = webClientBuilder.build()
                         .post()
                         .uri(openAiApiUrl)
                         .header("Authorization", "Bearer " + openAiApiKey)
@@ -181,14 +205,16 @@
                 return briefingRepository.save(briefing);
             } catch (Exception e) {
                 log.error("[AI Briefing] Failed to generate briefing for RCIC {}: {}", rcicUserId, e.getMessage(), e);
-                RcicAiBriefing fallback = new RcicAiBriefing();
-                fallback.setRcicUserId(rcicUserId);
-                fallback.setBriefingDate(today);
-                fallback.setBriefingText("AI briefing is temporarily unavailable. Your Action Center remains fully functional.");
-                fallback.setBulletPoints("[]");
-                fallback.setClientSpotlights("[]");
-                fallback.setContextSnapshot(context);
-                fallback.setModelVersion(openAiModel);
+                RcicAiBriefing fallback = unavailableBriefing(rcicUserId, today, context);
+                if (aiResponse != null) {
+                    // OpenAI answered, so the call was billed even though the answer was unusable.
+                    // Storing the fallback uses up today's call; a failed request stays retryable.
+                    if (aiResponse.getUsage() != null) {
+                        fallback.setPromptTokens(aiResponse.getUsage().getPromptTokens());
+                        fallback.setCompletionTokens(aiResponse.getUsage().getCompletionTokens());
+                    }
+                    return briefingRepository.save(fallback);
+                }
                 return fallback;
             }
         }

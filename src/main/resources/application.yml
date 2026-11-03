@@ -1,3 +1,10 @@
 spring:
   profiles:
     active: dev
+
+# Scheduled job tracking for the admin Scheduled Jobs page (common: com.blift.common.scheduling).
+# The key is the path segment of /api/scheduled-jobs/<key>, routed by the gateway.
+blift:
+  jobs:
+    service-key: ai
+    create-shedlock-table: true
