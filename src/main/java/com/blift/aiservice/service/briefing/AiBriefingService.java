@@ -7,8 +7,7 @@
     import com.blift.aiservice.entity.RcicAiContext;
     import com.blift.aiservice.repository.RcicAiBriefingRepository;
     import com.blift.aiservice.repository.RcicAiContextRepository;
-    import org.springframework.jdbc.core.JdbcTemplate;
-    import org.springframework.transaction.support.TransactionTemplate;
+    import org.springframework.dao.DataIntegrityViolationException;
     import com.blift.aiservice.service.context.AiContextBuilderService;
     import com.fasterxml.jackson.core.type.TypeReference;
     import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,6 +22,7 @@
 
     import java.time.Duration;
     import java.time.LocalDate;
+    import java.time.ZoneId;
     import java.util.List;
     import java.util.Map;
     import java.util.Optional;
@@ -37,10 +37,13 @@
             private final AiContextBuilderService contextBuilderService;
             private final WebClient.Builder webClientBuilder;
             private final ObjectMapper objectMapper;
-            private final TransactionTemplate transactionTemplate;
-            private final JdbcTemplate jdbcTemplate;
 
-            private static final int BRIEFING_LOCK_NAMESPACE = 7301;
+            /**
+             * Striped in-process locks so simultaneous opens by one RCIC (two tabs) make one OpenAI
+             * call. Across instances the uq_rcic_briefing_date constraint settles the race. No DB
+             * connection or transaction is held while OpenAI is called.
+             */
+            private final Object[] briefingLocks = createLocks(64);
 
             @Value("${openai.api.key}")
             private String openAiApiKey;
@@ -64,6 +67,12 @@
                 - Do not provide immigration legal advice.
                 - CRS estimates must be labelled "Estimated" and include a brief rationale.
                 - If insufficient data exists to estimate CRS, omit the score and say "Incomplete profile".
+                - Keep CRS estimates and pathway assessments in clientSpotlights only; briefingText and bulletPoints
+                  must contain only facts from the data, never estimates or recommendations presented as events.
+                - "dataUnavailable" lists sources that could not be loaded. Their figures are placeholders, not zero:
+                  for each one, say plainly that this part of the practice could not be checked right now, and never
+                  claim there is nothing pending in that area.
+                - Case tasks with a dueDate are IRCC deadlines; mention the nearest ones first.
                 - Respond in valid JSON only. No markdown, no code blocks. Pure JSON.
 
                 Response schema:
@@ -83,18 +92,34 @@
 
         /** Generated on first page open of the day; every later open reads the stored briefing. */
         public RcicAiBriefing getOrGenerateBriefing(Long rcicUserId) {
-            LocalDate today = LocalDate.now();
+            // "Today" is the RCIC's local day, so the briefing rolls over at their midnight, not UTC's.
+            ZoneId zone = contextBuilderService.resolveZone(rcicUserId);
+            LocalDate today = LocalDate.now(zone);
             Optional<RcicAiBriefing> cached = briefingRepository.findByRcicUserIdAndBriefingDate(rcicUserId, today);
             if (cached.isPresent()) {
                 return cached.get();
             }
-            // The lock makes simultaneous requests (two tabs, several instances) wait, and the
-            // re-check hands them the stored briefing, so only the first one calls OpenAI.
-            return transactionTemplate.execute(status -> {
-                jdbcTemplate.queryForList("SELECT pg_advisory_xact_lock(?, ?)", BRIEFING_LOCK_NAMESPACE, Long.hashCode(rcicUserId));
+            synchronized (briefingLocks[Math.floorMod(Long.hashCode(rcicUserId), briefingLocks.length)]) {
                 return briefingRepository.findByRcicUserIdAndBriefingDate(rcicUserId, today)
-                        .orElseGet(() -> generateBriefing(rcicUserId, today));
-            });
+                        .orElseGet(() -> generateBriefing(rcicUserId, today, zone));
+            }
+        }
+
+        private static Object[] createLocks(int count) {
+            Object[] locks = new Object[count];
+            for (int i = 0; i < count; i++) locks[i] = new Object();
+            return locks;
+        }
+
+        /** Saves a new briefing; if another instance stored today's first, returns that one instead. */
+        private RcicAiBriefing saveOrGetExisting(RcicAiBriefing briefing) {
+            try {
+                return briefingRepository.save(briefing);
+            } catch (DataIntegrityViolationException e) {
+                log.info("[AI Briefing] Another instance stored today's briefing for RCIC {} first", briefing.getRcicUserId());
+                return briefingRepository.findByRcicUserIdAndBriefingDate(briefing.getRcicUserId(), briefing.getBriefingDate())
+                        .orElseThrow(() -> e);
+            }
         }
 
         /** Refreshing never buys a second briefing: the limit is one per RCIC per day. */
@@ -102,17 +127,17 @@
             return getOrGenerateBriefing(rcicUserId);
         }
 
-        private RcicAiBriefing generateBriefing(Long rcicUserId, LocalDate today) {
+        private RcicAiBriefing generateBriefing(Long rcicUserId, LocalDate today, ZoneId zone) {
             RcicAiContext context = contextRepository
                     .findByRcicUserIdAndContextDate(rcicUserId, today)
                     .filter(existing -> !"FAILED".equals(existing.getBuildStatus()))
-                    .orElseGet(() -> contextBuilderService.buildContextForRcic(rcicUserId));
+                    .orElseGet(() -> contextBuilderService.buildContextForRcic(rcicUserId, today, zone));
             if ("FAILED".equals(context.getBuildStatus())) {
                 // No facts to summarise: don't pay for an empty briefing. The next open tries again.
                 log.warn("[AI Briefing] Context build failed for RCIC {} — skipping OpenAI call", rcicUserId);
                 return unavailableBriefing(rcicUserId, today, context);
             }
-            return generateBriefingFromContext(rcicUserId, context);
+            return generateBriefingFromContext(rcicUserId, today, context);
         }
 
         private RcicAiBriefing unavailableBriefing(Long rcicUserId, LocalDate today, RcicAiContext context) {
@@ -128,8 +153,7 @@
         }
 
         @SuppressWarnings("unchecked")
-        private RcicAiBriefing generateBriefingFromContext(Long rcicUserId, RcicAiContext context) {
-            LocalDate today = LocalDate.now();
+        private RcicAiBriefing generateBriefingFromContext(Long rcicUserId, LocalDate today, RcicAiContext context) {
             log.info("[AI Briefing] Generating briefing for RCIC {} from context id={}", rcicUserId, context.getId());
 
             OpenAiResponse aiResponse = null;
@@ -202,7 +226,7 @@
                     briefing.setCompletionTokens(aiResponse.getUsage().getCompletionTokens());
                 }
 
-                return briefingRepository.save(briefing);
+                return saveOrGetExisting(briefing);
             } catch (Exception e) {
                 log.error("[AI Briefing] Failed to generate briefing for RCIC {}: {}", rcicUserId, e.getMessage(), e);
                 RcicAiBriefing fallback = unavailableBriefing(rcicUserId, today, context);
@@ -213,7 +237,7 @@
                         fallback.setPromptTokens(aiResponse.getUsage().getPromptTokens());
                         fallback.setCompletionTokens(aiResponse.getUsage().getCompletionTokens());
                     }
-                    return briefingRepository.save(fallback);
+                    return saveOrGetExisting(fallback);
                 }
                 return fallback;
             }

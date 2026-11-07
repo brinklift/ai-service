@@ -13,6 +13,7 @@ public class BookingCountsDto {
     private long upcomingToday;
     private long upcomingTomorrow;
     private long upcomingNext7Days;
+    private long consultationRequests;
     private long pendingRescheduleRequests;
     private long counterProposedRequests;
     private long pendingMeetingInvitations;

@@ -39,6 +39,7 @@ com/blift/aiservice/dto/response/AiBriefingResponseDto.class
 com/blift/aiservice/controller/AiPracticeAssistantController$2.class
 com/blift/aiservice/dto/feign/BookingCountsDto$BookingCountsDtoBuilder.class
 com/blift/aiservice/dto/feign/AiActionCentreSummaryDto.class
+com/blift/aiservice/config/SchedulingConfig.class
 com/blift/aiservice/dto/feign/AiRefundDto.class
 com/blift/aiservice/repository/RcicAiContextRepository.class
 com/blift/aiservice/feignClient/CaseMgtFeignClient.class

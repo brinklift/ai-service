@@ -13,11 +13,10 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,17 +35,14 @@ class AiBriefingServiceTest {
     @Mock RcicAiBriefingRepository briefingRepository;
     @Mock AiContextBuilderService contextBuilderService;
     @Mock WebClient.Builder webClientBuilder;
-    @Mock TransactionTemplate transactionTemplate;
-    @Mock JdbcTemplate jdbcTemplate;
 
     private AiBriefingService service;
 
     @BeforeEach
     void setUp() {
         service = new AiBriefingService(contextRepository, briefingRepository, contextBuilderService,
-                webClientBuilder, new ObjectMapper(), transactionTemplate, jdbcTemplate);
-        when(transactionTemplate.execute(any())).thenAnswer(call ->
-                call.<TransactionCallback<RcicAiBriefing>>getArgument(0).doInTransaction(null));
+                webClientBuilder, new ObjectMapper());
+        when(contextBuilderService.resolveZone(any())).thenReturn(ZoneId.of("America/Toronto"));
     }
 
     @Test
@@ -57,7 +53,7 @@ class AiBriefingServiceTest {
         assertThat(service.getOrGenerateBriefing(1L)).isSameAs(stored);
         assertThat(service.refreshBriefing(1L)).isSameAs(stored);
 
-        verifyNoInteractions(webClientBuilder, jdbcTemplate);
+        verifyNoInteractions(webClientBuilder);
     }
 
     @Test
@@ -77,11 +73,21 @@ class AiBriefingServiceTest {
         failed.setBuildStatus("FAILED");
         when(briefingRepository.findByRcicUserIdAndBriefingDate(eq(1L), any())).thenReturn(Optional.empty());
         when(contextRepository.findByRcicUserIdAndContextDate(eq(1L), any())).thenReturn(Optional.empty());
-        when(contextBuilderService.buildContextForRcic(1L)).thenReturn(failed);
+        when(contextBuilderService.buildContextForRcic(eq(1L), any(), any())).thenReturn(failed);
 
         assertThat(service.getOrGenerateBriefing(1L).getBriefingText()).contains("temporarily unavailable");
 
         verifyNoInteractions(webClientBuilder);
         verify(briefingRepository, never()).save(any());
+    }
+
+    @Test
+    void briefingDateIsTheRcicsLocalDay() {
+        ZoneId kolkata = ZoneId.of("Asia/Kolkata");
+        when(contextBuilderService.resolveZone(1L)).thenReturn(kolkata);
+        RcicAiBriefing stored = new RcicAiBriefing();
+        when(briefingRepository.findByRcicUserIdAndBriefingDate(1L, LocalDate.now(kolkata))).thenReturn(Optional.of(stored));
+
+        assertThat(service.getOrGenerateBriefing(1L)).isSameAs(stored);
     }
 }

@@ -30,6 +30,10 @@ public interface UserFeignClient {
     @GetMapping("/api/user/internal/{userId}")
     ResponseEntity<AiRcicProfileDto> getUserById(@PathVariable Long userId);
 
+    /** user-service only answers for the caller's own token, so the RCIC's Authorization header is forwarded. */
+    @GetMapping("/api/direct-messages/unread-message-counter/{userId}")
+    ResponseEntity<com.blift.common.dto.LongDto> getUnreadMessageCounter(@org.springframework.web.bind.annotation.RequestHeader("Authorization") String authorization, @PathVariable Long userId);
+
     @PostMapping("/api/user/get-user-id-by-token")
     ResponseEntity<Long> getCurrentUserId(@RequestBody JWTToken jwtToken);
 }

@@ -3,6 +3,7 @@
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/JwtAuthConverter.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/SecurityConfig.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/config/JacksonConfig.java
+/Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/config/SchedulingConfig.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/controller/AiPracticeAssistantController.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/dto/feign/AiActionCentreSummaryDto.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/dto/feign/AiBookingDto.java
