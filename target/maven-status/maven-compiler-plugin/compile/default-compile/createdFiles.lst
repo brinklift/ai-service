@@ -23,6 +23,7 @@ com/blift/aiservice/dto/feign/AiRefundDto$AiRefundDtoBuilder.class
 com/blift/aiservice/service/context/AiContextBuilderService.class
 com/blift/aiservice/service/briefing/AiBriefingService.class
 com/blift/aiservice/dto/openai/OpenAiUsage.class
+com/blift/aiservice/BliftClientJwtDecoderConfig.class
 com/blift/aiservice/dto/feign/AiBookingDto$AiBookingDtoBuilder.class
 com/blift/aiservice/service/briefing/AiBriefingService$1.class
 com/blift/aiservice/dto/response/ConsultationStreamDistributionDto.class

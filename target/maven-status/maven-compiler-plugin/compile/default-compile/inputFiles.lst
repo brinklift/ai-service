@@ -1,5 +1,6 @@
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/AiServiceApplication.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/AiServiceUtils.java
+/Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/BliftClientJwtDecoderConfig.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/JwtAuthConverter.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/SecurityConfig.java
 /Volumes/Development/blift/ai-service/src/main/java/com/blift/aiservice/config/JacksonConfig.java
