@@ -33,7 +33,11 @@ public interface CaseMgtFeignClient {
             @RequestParam(defaultValue = "monthly") String period);
 
     @GetMapping("/api/action-centre/internal/{rcicUserId}/summary")
-    ResponseEntity<AiActionCentreSummaryDto> getActionCentreSummaryForRcic(@PathVariable Long rcicUserId);
+    ResponseEntity<AiActionCentreSummaryDto> getActionCentreSummaryForRcic(@PathVariable Long rcicUserId, @org.springframework.web.bind.annotation.RequestParam(value = "zone", required = false) String zone);
+
+    /** The RCIC's open case tasks (deadlines, documents to review, receipts, refusal notices), earliest deadline first. */
+    @GetMapping("/api/action-centre/internal/{rcicUserId}/case-tasks")
+    ResponseEntity<List<Map<String, Object>>> getCaseTasksForRcic(@PathVariable Long rcicUserId);
 
     @GetMapping("/api/payment/rcic-internal/{rcicUserId}/completed-report-purchases-count")
     ResponseEntity<Long> getCompletedReportPurchasesCount(@PathVariable Long rcicUserId);
