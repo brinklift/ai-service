@@ -12,11 +12,13 @@ import com.blift.aiservice.repository.RcicAiContextRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -35,32 +37,30 @@ public class AiContextBuilderService {
     private final RcicAiContextRepository contextRepository;
     private final ObjectMapper objectMapper;
 
-    @Scheduled(cron = "${ai.briefing.schedule-cron:0 0 4 * * *}")
-    public void runNightlyContextBuild() {
-        log.info("[AI Context Builder] Starting nightly context build");
-        List<Long> activeRcicIds = getActiveSubscriberIds();
-        log.info("[AI Context Builder] Found {} active Blift Pro subscribers", activeRcicIds.size());
+    static final ZoneId DEFAULT_ZONE = ZoneId.of("America/Toronto");
 
-        int batchSize = 50;
-        for (int i = 0; i < activeRcicIds.size(); i += batchSize) {
-            List<Long> batch = activeRcicIds.subList(i, Math.min(i + batchSize, activeRcicIds.size()));
-            processBatch(batch);
-            if (i + batchSize < activeRcicIds.size()) {
-                try {
-                    Thread.sleep(2000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
+    /** The RCIC's profile time zone; "today" for the briefing and its counts is their local day. */
+    public ZoneId resolveZone(Long rcicUserId) {
+        try {
+            var profile = userFeignClient.getRcicProfileByUserId(rcicUserId).getBody();
+            if (profile != null && profile.getTimezone() != null && !profile.getTimezone().isBlank()) {
+                return ZoneId.of(profile.getTimezone().trim());
             }
+        } catch (Exception e) {
+            log.warn("[AI Context] Could not resolve time zone for RCIC {}; using {}", rcicUserId, DEFAULT_ZONE, e);
         }
-        log.info("[AI Context Builder] Nightly context build complete");
+        return DEFAULT_ZONE;
     }
 
     public RcicAiContext buildContextForRcic(Long rcicUserId) {
-        LocalDate today = LocalDate.now();
+        ZoneId zone = resolveZone(rcicUserId);
+        return buildContextForRcic(rcicUserId, LocalDate.now(zone), zone);
+    }
+
+    public RcicAiContext buildContextForRcic(Long rcicUserId, LocalDate today, ZoneId zone) {
         log.info("[AI Context Builder] Building context for RCIC user {}", rcicUserId);
         try {
-            Map<String, Object> snapshot = assembleSnapshot(rcicUserId, today);
+            Map<String, Object> snapshot = assembleSnapshot(rcicUserId, today, zone);
             String snapshotJson = objectMapper.writeValueAsString(snapshot);
 
             RcicAiContext context = contextRepository
@@ -92,29 +92,13 @@ public class AiContextBuilderService {
         }
     }
 
-    private void processBatch(List<Long> rcicIds) {
-        for (Long rcicUserId : rcicIds) {
-            try {
-                buildContextForRcic(rcicUserId);
-            } catch (Exception e) {
-                log.error("[AI Context Builder] Unhandled error for RCIC {}: {}", rcicUserId, e.getMessage());
-            }
-        }
-    }
-
-    private List<Long> getActiveSubscriberIds() {
-        try {
-            var response = userFeignClient.getActiveBliftProRcicIds();
-            return response.getBody() != null ? response.getBody() : List.of();
-        } catch (Exception e) {
-            log.error("[AI Context Builder] Failed to get active subscriber IDs: {}", e.getMessage());
-            return List.of();
-        }
-    }
-
-    private Map<String, Object> assembleSnapshot(Long rcicUserId, LocalDate today) {
+    private Map<String, Object> assembleSnapshot(Long rcicUserId, LocalDate today, ZoneId zone) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("builtAt", Instant.now().toString());
+        // Sources that could not be read. Their figures below are placeholders, not real zeros,
+        // and the prompt tells the model to say so instead of reporting "nothing pending".
+        List<String> unavailable = new ArrayList<>();
+        snapshot.put("dataUnavailable", unavailable);
 
         try {
             var profileResp = userFeignClient.getRcicProfileByUserId(rcicUserId);
@@ -136,18 +120,25 @@ public class AiContextBuilderService {
 
         BookingCountsDto counts = null;
         try {
-            var resp = bookingFeignClient.getBookingCountsForRcic(rcicUserId);
+            var resp = bookingFeignClient.getBookingCountsForRcic(rcicUserId, zone.getId());
             counts = resp.getBody();
         } catch (Exception e) {
             log.warn("[AI Context] Could not fetch booking counts for {}: {}", rcicUserId, e.getMessage());
         }
+        if (counts == null) unavailable.add("consultationsAndBookings");
 
         Map<String, Object> todaySection = new LinkedHashMap<>();
         todaySection.put("date", today.toString());
         todaySection.put("consultationCount", counts != null ? counts.getUpcomingToday() : 0);
         todaySection.put("upcomingTodayCount", counts != null ? counts.getUpcomingToday() : 0);
         todaySection.put("upcomingTomorrowCount", counts != null ? counts.getUpcomingTomorrow() : 0);
-        todaySection.put("unreadMessageCount", 0);
+        todaySection.put("consultationRequestCount", counts != null ? counts.getConsultationRequests() : 0);
+        todaySection.put("rescheduleRequestCount", counts != null ? counts.getPendingRescheduleRequests() + counts.getCounterProposedRequests() : 0);
+        todaySection.put("failedPaymentCount", counts != null ? counts.getFailedPayments() : 0);
+        Long unread = unreadMessageCount(rcicUserId);
+        if (unread == null) unavailable.add("unreadMessages");
+        todaySection.put("unreadMessageCount", unread != null ? unread : 0);
+        todaySection.put("caseTasks", caseTasks(rcicUserId, unavailable));
 
         List<Map<String, Object>> reportsReady = new ArrayList<>();
         try {
@@ -163,6 +154,7 @@ public class AiContextBuilderService {
             }
         } catch (Exception e) {
             log.warn("[AI Context] Could not fetch reports for {}: {}", rcicUserId, e.getMessage());
+            unavailable.add("reportsReadyToShare");
         }
         todaySection.put("reportsReadyToShare", reportsReady);
 
@@ -190,6 +182,7 @@ public class AiContextBuilderService {
             }
         } catch (Exception e) {
             log.warn("[AI Context] Could not fetch refunds for {}: {}", rcicUserId, e.getMessage());
+            unavailable.add("pendingRefunds");
         }
         todaySection.put("pendingRefunds", refunds);
         todaySection.put("unsignedAgreementsCount", counts != null ? counts.getUnsignedAgreements() : 0);
@@ -211,6 +204,7 @@ public class AiContextBuilderService {
             }
         } catch (Exception e) {
             log.warn("[AI Context] Could not fetch weekly transactions for {}: {}", rcicUserId, e.getMessage());
+            unavailable.add("weeklyRevenue");
         }
 
         try {
@@ -289,7 +283,9 @@ public class AiContextBuilderService {
             if (purchaseResp.getBody() != null) {
                 long purchased = purchaseResp.getBody();
                 reportStatusMap.put("totalPurchasedReports", purchased);
-                reportStatusMap.put("totalPurchaseAmount", purchased * 5.0);
+                // The real paid total, not count × a hard-coded price.
+                var totalResp = caseMgtFeignClient.getCompletedReportPurchasesTotal(rcicUserId);
+                reportStatusMap.put("totalPurchaseAmount", totalResp.getBody() != null ? totalResp.getBody().doubleValue() : 0.0);
             }
         } catch (Exception e) {
             log.warn("Could not fetch completed report purchase count from case-mgt: {}", e.getMessage());
@@ -298,5 +294,48 @@ public class AiContextBuilderService {
         snapshot.put("reportStatus", reportStatusMap);
 
         return snapshot;
+    }
+
+    /** Most urgent case tasks (earliest IRCC deadline first), capped so the prompt stays small. */
+    private List<Map<String, Object>> caseTasks(Long rcicUserId, List<String> unavailable) {
+        try {
+            List<Map<String, Object>> tasks = caseMgtFeignClient.getCaseTasksForRcic(rcicUserId).getBody();
+            if (tasks == null) {
+                unavailable.add("caseTasks");
+                return List.of();
+            }
+            return tasks.stream().limit(MAX_CASE_TASKS).map(task -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("kind", task.get("kind"));
+                row.put("title", task.get("title"));
+                row.put("dueDate", task.get("dueDate"));
+                return row;
+            }).toList();
+        } catch (Exception e) {
+            log.warn("[AI Context] Could not fetch case tasks for {}", rcicUserId, e);
+            unavailable.add("caseTasks");
+            return List.of();
+        }
+    }
+
+    private static final int MAX_CASE_TASKS = 15;
+
+    /**
+     * user-service only reports the caller's own unread count, so this forwards the RCIC's token
+     * from the current request. Null means unknown (no request, or the call failed).
+     */
+    private Long unreadMessageCount(Long rcicUserId) {
+        try {
+            if (!(RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes attributes)) {
+                return null;
+            }
+            String authorization = attributes.getRequest().getHeader("Authorization");
+            if (authorization == null || authorization.isBlank()) return null;
+            var body = userFeignClient.getUnreadMessageCounter(authorization, rcicUserId).getBody();
+            return body != null ? body.id() : null;
+        } catch (Exception e) {
+            log.warn("[AI Context] Could not fetch unread message count for {}", rcicUserId, e);
+            return null;
+        }
     }
 }

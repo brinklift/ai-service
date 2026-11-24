@@ -205,7 +205,7 @@ public class AiInsightsService {
         dto.setRevenueByDay(revenueByDay);
 
         try {
-            var resp = bookingFeignClient.getBookingCountsForRcic(rcicUserId);
+            var resp = bookingFeignClient.getBookingCountsForRcic(rcicUserId, null);
             if (resp.getBody() != null) {
                 BookingCountsDto counts = resp.getBody();
                 dto.setUpcomingToday(counts.getUpcomingToday());

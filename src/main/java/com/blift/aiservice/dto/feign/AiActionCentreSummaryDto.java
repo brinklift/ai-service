@@ -11,6 +11,11 @@ import lombok.NoArgsConstructor;
 @Builder
 public class AiActionCentreSummaryDto {
     private long upcomingConsultations;
+    private long consultationRequests;
+    private long failedPayments;
+    private long caseTasks;
+    /** Sources case-mgt could not read; their counts mean "unknown", not zero. */
+    private java.util.List<String> unavailable;
     private long pendingRescheduleRequests;
     private long pendingMeetingInvitations;
     private long unsignedAgreements;

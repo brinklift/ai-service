@@ -24,7 +24,7 @@ public interface BookingFeignClient {
             @RequestParam(defaultValue = "200") int size);
 
     @GetMapping("/api/action-centre/booking-counts-internal/{rcicUserId}")
-    ResponseEntity<BookingCountsDto> getBookingCountsForRcic(@PathVariable Long rcicUserId);
+    ResponseEntity<BookingCountsDto> getBookingCountsForRcic(@PathVariable Long rcicUserId, @org.springframework.web.bind.annotation.RequestParam(value = "zone", required = false) String zone);
 
     @GetMapping("/api/consultation-workspace/rcic-internal/{rcicUserId}/reports-ready-to-share")
     ResponseEntity<List<AiWorkspaceDto>> getReportsReadyToShareForRcic(@PathVariable Long rcicUserId);
