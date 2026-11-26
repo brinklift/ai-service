@@ -134,7 +134,7 @@
                     .orElseGet(() -> contextBuilderService.buildContextForRcic(rcicUserId, today, zone));
             if ("FAILED".equals(context.getBuildStatus())) {
                 // No facts to summarise: don't pay for an empty briefing. The next open tries again.
-                log.warn("[AI Briefing] Context build failed for RCIC {} — skipping OpenAI call", rcicUserId);
+                log.warn("[AI Briefing] Context build failed for RCIC {} - skipping OpenAI call", rcicUserId);
                 return unavailableBriefing(rcicUserId, today, context);
             }
             return generateBriefingFromContext(rcicUserId, today, context);
@@ -262,7 +262,7 @@
         private String buildUserPrompt(String snapshotJson) {
             String data = snapshotJson == null ? "" : snapshotJson;
             if (data.length() > MAX_SNAPSHOT_CHARS) {
-                log.warn("[AI Briefing] Snapshot of {} chars exceeds the {} char cap — truncating before sending to OpenAI.",
+                log.warn("[AI Briefing] Snapshot of {} chars exceeds the {} char cap - truncating before sending to OpenAI.",
                         data.length(), MAX_SNAPSHOT_CHARS);
                 data = data.substring(0, MAX_SNAPSHOT_CHARS);
             }

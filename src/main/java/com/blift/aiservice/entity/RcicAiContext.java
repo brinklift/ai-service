@@ -12,7 +12,7 @@ import java.time.LocalDate;
 /**
  * Stores the nightly operational context snapshot for each subscribed RCIC.
  * The snapshot_json field contains all SQL-derived facts used to generate the AI briefing.
- * No PII or LLM output is stored here — only aggregated operational data.
+ * No PII or LLM output is stored here - only aggregated operational data.
  */
 @Entity
 @Table(name = "rcic_ai_context",

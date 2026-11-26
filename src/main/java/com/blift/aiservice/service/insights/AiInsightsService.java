@@ -50,7 +50,7 @@ public class AiInsightsService {
             Map<String, Object> reportStatus = sectionOf(snapshot, "reportStatus");
             Map<String, Object> workload = sectionOf(snapshot, "workloadForecast");
 
-            // Always fetch LIFETIME revenue live — snapshot data is stale (only this week/last week)
+            // Always fetch LIFETIME revenue live - snapshot data is stale (only this week/last week)
             double totalRevenue = 0;
             double thisWeekRevenue = 0;
             double lastWeekRevenue = 0;
@@ -102,7 +102,7 @@ public class AiInsightsService {
             dto.setWorkloadTodayMinutes(toLong(workload.get("todayMinutes")));
             dto.setWorkloadTomorrowMinutes(toLong(workload.get("tomorrowMinutes")));
 
-            // Always fetch workload live — snapshot may be stale if fields were added after snapshot was created
+            // Always fetch workload live - snapshot may be stale if fields were added after snapshot was created
             try {
                 var wlResp = bookingFeignClient.getWorkloadForecastForRcic(rcicUserId);
                 if (wlResp.getBody() != null) {
@@ -325,7 +325,7 @@ public class AiInsightsService {
      *
      * Every revenue figure surfaced by Practice Intelligence is displayed as CAD, so
      * rows in another currency are reported separately instead of being added into a
-     * CAD total — adding them would silently overstate revenue by the FX difference.
+     * CAD total - adding them would silently overstate revenue by the FX difference.
      */
     private double sumCadRevenue(List<Map<String, Object>> rows, Long rcicUserId, String label) {
         if (rows == null) {
@@ -339,7 +339,7 @@ public class AiInsightsService {
             if ("CAD".equalsIgnoreCase(currencyCode)) {
                 total += amount;
             } else if (amount != 0) {
-                log.warn("[AI Insights] Excluding {} {} of {} revenue for rcicUserId {} — no FX conversion available.",
+                log.warn("[AI Insights] Excluding {} {} of {} revenue for rcicUserId {} - no FX conversion available.",
                         amount, currencyCode, label, rcicUserId);
             }
         }
@@ -386,7 +386,7 @@ public class AiInsightsService {
             return (Map<String, Object>) map;
         }
         if (section != null) {
-            log.warn("[AI Insights] Snapshot section '{}' was {}, expected an object — treating as empty.",
+            log.warn("[AI Insights] Snapshot section '{}' was {}, expected an object - treating as empty.",
                     key, section.getClass().getSimpleName());
         }
         return Map.of();

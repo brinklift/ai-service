@@ -11,7 +11,7 @@ import java.time.LocalDate;
 
 /**
  * Stores the LLM-generated daily briefing for each subscribed RCIC.
- * This is the AI output — cached and served instantly on page load.
+ * This is the AI output - cached and served instantly on page load.
  * client_spotlights stores per-client pathway assessment (CRS estimate + match label).
  */
 @Entity
