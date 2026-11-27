@@ -51,7 +51,7 @@
         @Value("${openai.api.url}")
         private String openAiApiUrl;
 
-        @Value("${openai.api.model:gpt-4-turbo}")
+        @Value("${openai.api.model:gpt-4.1-mini}")
         private String openAiModel;
 
         private static final String SYSTEM_PROMPT = """
