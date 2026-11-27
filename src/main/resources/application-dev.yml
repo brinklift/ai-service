@@ -74,7 +74,7 @@ openai:
     url: https://api.openai.com/v1/chat/completions
     model: gpt-4-turbo
 
-# Internal service base URLs for Feign (bypass gateway — direct service calls)
+# Internal service base URLs for Feign (bypass gateway - direct service calls)
 services:
   booking-service:
     url: http://localhost:8081
